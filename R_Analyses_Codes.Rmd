@@ -1,0 +1,262 @@
+---
+title: "DATA 566 - Final Exam"
+author: "Sharath Chandra Shankar - 2576017"
+date: "2025-12-07"
+output: html_document
+---
+
+# -----------------------------
+# Load required libraries
+# -----------------------------
+```{r}
+library(ggplot2)
+library(dplyr)
+library(MASS)   # polr for ordinal regression
+library(nnet)   # multinom for multinomial regression
+```
+
+# -----------------------------
+# Load Data
+# -----------------------------
+```{r}
+# Define the counts for Control and Experimental groups
+control <- matrix(c(
+  53,10,6,6,
+  10,35,7,0,
+  8,18,46,12,
+  3,8,17,22,
+  45,5,5,4,
+  10,22,6,0,
+  10,14,37,4,
+  4,1,4,17,
+  47,9,2,5,
+  13,24,4,1,
+  15,12,22,4,
+  2,0,5,17
+), nrow = 12, byrow = TRUE)
+
+experimental <- matrix(c(
+  83,11,6,5,
+  15,39,13,1,
+  16,28,41,4,
+  4,6,19,24,
+  69,9,6,3,
+  11,18,5,0,
+  10,14,22,3,
+  6,4,13,12,
+  87,5,7,2,
+  11,12,6,2,
+  12,12,4,1,
+  3,3,3,12
+), nrow = 12, byrow = TRUE)
+
+# Fatigue and Weakness levels
+fatigue <- rep(0:3, times = 3)  # 0-3 repeated for 3 blocks
+weakness <- rep(0:3, times = 12/4) # 0-3 repeated for each row in block
+
+# Create a data frame in long format
+df <- data.frame(
+  Fatigue = rep(0:3, each = 4*3),   # 4 fatigue levels, 4 weakness levels, 3 blocks
+  Weakness = rep(0:3, times = 4*3),
+  Treatment = rep(c("Control", "Experimental"), each = 48),
+  Count = c(as.vector(control), as.vector(experimental))
+)
+```
+
+# -----------------------------
+# Exploratory Data Analysis (EDA)
+# -----------------------------
+```{r}
+ggplot(df, aes(x = factor(Fatigue), y = Count, fill = Treatment)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Fatigue Level", y = "Count", title = "Fatigue Distribution by Treatment") +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(df, aes(x = factor(Weakness), y = Count, fill = Treatment)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Weakness Level", y = "Count", title = "Weakness Distribution by Treatment") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(df, aes(x = factor(Weakness), y = factor(Fatigue), fill = Count)) +
+  geom_tile(color = "white") +
+  facet_wrap(~Treatment) +
+  scale_fill_gradient(low = "white", high = "red") +
+  labs(x = "Weakness Level", y = "Fatigue Level", title = "Heatmap of Fatigue vs Weakness by Treatment") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(df, aes(x = factor(Fatigue), y = Count, fill = factor(Weakness))) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~Treatment) +
+  labs(x = "Fatigue Level", y = "Count", fill = "Weakness Level",
+       title = "Weakness distribution within each Fatigue Level") +
+  theme_minimal()
+```
+
+# -----------------------------
+# Prepare variables
+# -----------------------------
+```{r}
+df$Fatigue <- factor(df$Fatigue, ordered = TRUE)
+df$Weakness <- factor(df$Weakness, ordered = TRUE)
+df$Treatment <- factor(df$Treatment)
+```
+
+# -----------------------------
+# Fatigue Prediction
+# -----------------------------
+```{r}
+
+# 1. ORDINAL (proportional-odds)
+ord_weak  <- polr(Fatigue ~ Weakness,                weights=Count, data=df, Hess=TRUE)
+ord_tx    <- polr(Fatigue ~ Treatment,               weights=Count, data=df, Hess=TRUE)
+ord_both  <- polr(Fatigue ~ Weakness + Treatment,    weights=Count, data=df, Hess=TRUE)
+ord_int   <- polr(Fatigue ~ Weakness * Treatment,    weights=Count, data=df, Hess=TRUE)
+
+# 2. MULTINOMIAL (unordered)
+mult_weak  <- multinom(Fatigue ~ Weakness,              weights=Count, data=df, trace=FALSE)
+mult_tx    <- multinom(Fatigue ~ Treatment,             weights=Count, data=df, trace=FALSE)
+mult_both  <- multinom(Fatigue ~ Weakness + Treatment,  weights=Count, data=df, trace=FALSE)
+mult_int   <- multinom(Fatigue ~ Weakness * Treatment,  weights=Count, data=df, trace=FALSE)
+
+# -----------------------------
+# AIC / BIC table
+# -----------------------------
+model_list <- list(
+  Ord_Weak = ord_weak, Ord_Tx = ord_tx, Ord_Both = ord_both, Ord_Int = ord_int,
+  Mult_Weak = mult_weak, Mult_Tx = mult_tx, Mult_Both = mult_both, Mult_Int = mult_int
+)
+
+aic_bic_table <- data.frame(
+  Model = names(model_list),
+  AIC = sapply(model_list, AIC),
+  BIC = sapply(model_list, BIC)
+)
+
+# Sort by AIC for easy viewing
+aic_bic_table <- aic_bic_table[order(aic_bic_table$AIC), ]
+print(aic_bic_table, row.names = FALSE)
+
+# -----------------------------
+# Likelihood ratio tests (nested comparisons)
+# -----------------------------
+# ORDINAL
+cat("\nOrdinal regression LRTs:\n")
+anova(ord_weak, ord_both)   # Weakness vs Weakness + Treatment
+anova(ord_tx, ord_both)     # Treatment vs Weakness + Treatment
+anova(ord_both, ord_int)    # Add interaction
+
+# MULTINOMIAL
+cat("\nMultinomial regression LRTs:\n")
+anova(mult_weak, mult_both)  
+anova(mult_tx, mult_both)
+anova(mult_both, mult_int)
+
+
+# POLR (ordinal)
+anova(ord_weak, ord_both)   # Weakness vs Weakness + Treatment
+anova(ord_tx, ord_both)     # Treatment vs Weakness + Treatment
+anova(ord_both, ord_int)    # Main effects vs interaction
+
+# Multinomial
+anova(mult_weak, mult_both)
+anova(mult_tx, mult_both)
+anova(mult_both, mult_int)
+```
+
+# -----------------------------
+# Weakness Prediction
+# -----------------------------
+```{r}
+# -----------------------------
+# Ordinal models (Weakness ~ Fatigue + Treatment)
+# -----------------------------
+Ordinal_Weakness_Only        <- polr(Weakness ~ Fatigue,              weights=Count, data=df, Hess=TRUE)
+Ordinal_Treatment_Only       <- polr(Weakness ~ Treatment,            weights=Count, data=df, Hess=TRUE)
+Ordinal_Additive             <- polr(Weakness ~ Fatigue + Treatment, weights=Count, data=df, Hess=TRUE)
+Ordinal_Interaction          <- polr(Weakness ~ Fatigue * Treatment, weights=Count, data=df, Hess=TRUE)
+
+# -----------------------------
+# Multinomial models
+# -----------------------------
+Multinomial_Weakness_Only        <- multinom(Weakness ~ Fatigue,              weights=Count, data=df, trace=FALSE)
+Multinomial_Treatment_Only       <- multinom(Weakness ~ Treatment,            weights=Count, data=df, trace=FALSE)
+Multinomial_Additive             <- multinom(Weakness ~ Fatigue + Treatment, weights=Count, data=df, trace=FALSE)
+Multinomial_Interaction          <- multinom(Weakness ~ Fatigue * Treatment, weights=Count, data=df, trace=FALSE)
+
+# -----------------------------
+# AIC and BIC comparison
+# -----------------------------
+all_models <- list(
+  "Ordinal with Fatigue"           = Ordinal_Weakness_Only,
+  "Ordinal with Treatment"         = Ordinal_Treatment_Only,
+  "Ordinal Additive"               = Ordinal_Additive,
+  "Ordinal with Interaction"       = Ordinal_Interaction,
+  "Multinomial with Fatigue"       = Multinomial_Weakness_Only,
+  "Multinomial with Treatment"     = Multinomial_Treatment_Only,
+  "Multinomial Additive"           = Multinomial_Additive,
+  "Multinomial with Interaction"   = Multinomial_Interaction
+)
+
+AIC_BIC_table <- data.frame(
+  Model = names(all_models),
+  AIC   = sapply(all_models, AIC),
+  BIC   = sapply(all_models, BIC)
+)
+
+# Sort by AIC for clarity
+AIC_BIC_table <- AIC_BIC_table[order(AIC_BIC_table$AIC), ]
+print(AIC_BIC_table, row.names = FALSE)
+
+# -----------------------------
+# Likelihood ratio tests (nested models)
+# -----------------------------
+# Ordinal
+cat("\nOrdinal Regression LRTs:\n")
+anova(Ordinal_Weakness_Only, Ordinal_Additive)   # Fatigue only vs Additive
+anova(Ordinal_Treatment_Only, Ordinal_Additive)  # Treatment only vs Additive
+anova(Ordinal_Additive, Ordinal_Interaction)     # Additive vs Interaction
+
+# Multinomial
+cat("\nMultinomial Regression LRTs:\n")
+anova(Multinomial_Weakness_Only, Multinomial_Additive)
+anova(Multinomial_Treatment_Only, Multinomial_Additive)
+anova(Multinomial_Additive, Multinomial_Interaction)
+```
+
+# -------------------------------------------
+# Fit loglinear models using Poisson regression
+# -------------------------------------------
+```{r}
+# Independence model: no interactions
+model_indep <- glm(Count ~ Weakness + Fatigue + Treatment,
+                   family = poisson, data = df)
+
+# Two-way interactions: all pairwise
+model_2way <- glm(Count ~ (Weakness + Fatigue + Treatment)^2,
+                  family = poisson, data = df)
+
+# Saturated model: all main effects + two-way + three-way interactions
+model_sat <- glm(Count ~ Weakness * Fatigue * Treatment,
+                 family = poisson, data = df)
+
+# -------------------------------------------
+# 3. Compare models using Likelihood Ratio Test (G²)
+# -------------------------------------------
+
+anova(model_indep, model_2way, model_sat, test = "Chisq")
+
+# -------------------------------------------
+# 4. Compare models using AIC and BIC
+# -------------------------------------------
+
+AIC(model_indep, model_2way, model_sat)
+BIC(model_indep, model_2way, model_sat)
+```
